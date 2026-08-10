@@ -2,7 +2,7 @@ import { flushSync } from 'react-dom';
 import React, { useLayoutEffect, useState, useRef, useEffect } from 'react';
 import ReactCrop, { type Crop, type PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
-import corbLogo from '../assets/images/Logo.png';
+import corbLogo from '../assets/images/logo.png';
 import { Menu, X } from 'lucide-react';
 
 type Step = 'upload' | 'crop';
