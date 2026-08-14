@@ -3,7 +3,7 @@ import React, { useLayoutEffect, useState, useRef, useEffect } from 'react';
 import ReactCrop, { type Crop, type PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import corbLogo from '../assets/images/logo.png';
-import { Menu, X } from 'lucide-react';
+import { Menu, X, Trash2, Undo, Redo } from 'lucide-react';
 
 type Step = 'upload' | 'crop';
 
@@ -45,6 +45,7 @@ export default function ImageEditor() {
   const [urlInput, setUrlInput] = useState('');
   const [sourceImage, setSourceImage] = useState<string>('');
   const [sourceImageHistory, setSourceImageHistory] = useState<string[]>([]);
+  const [redoHistory, setRedoHistory] = useState<string[]>([]);
   
   // Cropping
   const imgRef = useRef<HTMLImageElement>(null);
@@ -96,6 +97,7 @@ export default function ImageEditor() {
             const reader = new FileReader();
             reader.addEventListener('load', () => {
               setSourceImageHistory([]);
+              setRedoHistory([]);
               setSourceImage(reader.result as string);
               setStep('crop');
               setIsCroppingMode(false);
@@ -119,6 +121,7 @@ export default function ImageEditor() {
       const reader = new FileReader();
       reader.addEventListener('load', () => {
         setSourceImageHistory([]);
+        setRedoHistory([]);
         setSourceImage(reader.result?.toString() || '');
         setStep('crop');
         setIsCroppingMode(false);
@@ -139,6 +142,7 @@ export default function ImageEditor() {
       const reader = new FileReader();
       reader.addEventListener('load', () => {
         setSourceImageHistory([]);
+        setRedoHistory([]);
         setSourceImage(reader.result?.toString() || '');
         setStep('crop');
         setIsCroppingMode(false);
@@ -148,13 +152,39 @@ export default function ImageEditor() {
     }
   };
 
-  const undoCrop = () => {
+  const undo = () => {
     if (sourceImageHistory.length > 0) {
       const previousImage = sourceImageHistory[sourceImageHistory.length - 1];
+      setRedoHistory(prev => [...prev, sourceImage].slice(-10));
       setSourceImage(previousImage);
       setSourceImageHistory(prev => prev.slice(0, -1));
     }
   };
+
+  const redo = () => {
+    if (redoHistory.length > 0) {
+      const nextImage = redoHistory[redoHistory.length - 1];
+      setSourceImageHistory(prev => [...prev, sourceImage].slice(-10));
+      setSourceImage(nextImage);
+      setRedoHistory(prev => prev.slice(0, -1));
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey)) {
+          e.preventDefault();
+          redo();
+        } else if (e.key.toLowerCase() === 'z') {
+          e.preventDefault();
+          undo();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [sourceImage, sourceImageHistory, redoHistory]);
 
   const handleUrlLoad = async () => {
     if (!urlInput) return;
@@ -169,6 +199,8 @@ export default function ImageEditor() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load image');
+      setSourceImageHistory([]);
+      setRedoHistory([]);
       setSourceImage(data.dataUri);
       
       setStep('crop');
@@ -285,7 +317,8 @@ export default function ImageEditor() {
         reader.readAsDataURL(croppedBlob);
       });
       const dataUri = await base64Promise;
-      setSourceImageHistory(prev => [...prev, sourceImage]);
+      setSourceImageHistory(prev => [...prev, sourceImage].slice(-10));
+      setRedoHistory([]);
       setSourceImage(dataUri);
       setCrop(undefined);
       setCompletedCrop(undefined);
@@ -311,7 +344,8 @@ export default function ImageEditor() {
       });
       const bgData = await bgRes.json();
       if (!bgRes.ok) throw new Error(bgData.error || 'Failed to remove background');
-      setSourceImageHistory(prev => [...prev, sourceImage]);
+      setSourceImageHistory(prev => [...prev, sourceImage].slice(-10));
+      setRedoHistory([]);
       setSourceImage(bgData.dataUri);
       setCrop(undefined);
       setCompletedCrop(undefined);
@@ -359,6 +393,10 @@ export default function ImageEditor() {
       a.href = finalDataUrl;
       a.download = `Corbs_image.${extension}`;
       a.click();
+      
+      // Clear memory-heavy history caches after export as they are no longer needed
+      setSourceImageHistory([]);
+      setRedoHistory([]);
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Failed to export image');
@@ -398,6 +436,7 @@ export default function ImageEditor() {
     setStep('upload');
     setSourceImage('');
     setSourceImageHistory([]);
+    setRedoHistory([]);
     setCrop(undefined);
     setCompletedCrop(undefined);
     setIsCroppingMode(false);
@@ -422,25 +461,28 @@ export default function ImageEditor() {
           </div>
           <div className="flex flex-col gap-4">
             <button 
+              onClick={() => { undo(); setIsMobileMenuOpen(false); }} 
+              disabled={isLoading || sourceImageHistory.length === 0}
+              className="px-4 py-3 flex items-center justify-center gap-2 neo-convex text-main hover:!bg-none font-bold text-sm rounded transition-colors uppercase disabled:opacity-30 disabled:hover:!bg-none disabled:hover:!bg-transparent active:scale-95 active:neo-pressed border border-neo"
+            >
+              <Undo size={16} />
+              Undo
+            </button>
+            <button 
               onClick={() => { reset(); setIsMobileMenuOpen(false); }} 
               disabled={step === 'upload'}
-              className="px-4 py-3 neo-convex text-cyan-600 hover:!bg-cyan-600 hover:!bg-none hover:text-white font-bold text-sm rounded transition-colors uppercase disabled:opacity-50 disabled:hover:!bg-none disabled:hover:!bg-transparent disabled:hover:text-cyan-600 active:scale-95 active:neo-pressed border border-neo"
+              className="px-4 py-3 flex items-center justify-center gap-2 neo-convex text-cyan-600 hover:!bg-cyan-600 hover:!bg-none hover:text-white font-bold text-sm rounded transition-colors uppercase disabled:opacity-50 disabled:hover:!bg-none disabled:hover:!bg-transparent disabled:hover:text-cyan-600 active:scale-95 active:neo-pressed border border-neo"
             >
-              Clear all
+              <Trash2 size={16} />
+              Clear
             </button>
             <button 
-              onClick={() => { undoCrop(); setIsMobileMenuOpen(false); }} 
-              disabled={isLoading || sourceImageHistory.length === 0}
-              className="px-4 py-3 neo-convex text-cyan-600 hover:!bg-cyan-600 hover:!bg-none hover:text-white font-bold text-sm rounded transition-colors uppercase disabled:opacity-50 disabled:hover:!bg-none disabled:hover:!bg-transparent disabled:hover:text-cyan-600 active:scale-95 active:neo-pressed border border-neo"
+              onClick={() => { redo(); setIsMobileMenuOpen(false); }} 
+              disabled={isLoading || redoHistory.length === 0}
+              className="px-4 py-3 flex items-center justify-center gap-2 neo-convex text-main hover:!bg-none font-bold text-sm rounded transition-colors uppercase disabled:opacity-30 disabled:hover:!bg-none disabled:hover:!bg-transparent active:scale-95 active:neo-pressed border border-neo"
             >
-              Undo Edit
-            </button>
-            <button 
-              onClick={() => { exportResult(); setIsMobileMenuOpen(false); }} 
-              disabled={isLoading || step !== 'crop'}
-              className="px-4 py-3 neo-convex text-green-600 hover:!bg-green-600 hover:!bg-none hover:text-white font-bold text-sm rounded transition-colors uppercase disabled:opacity-50 disabled:hover:!bg-none disabled:hover:!bg-transparent disabled:hover:text-green-600 active:scale-95 active:neo-pressed border border-neo"
-            >
-              Export Result
+              <Redo size={16} />
+              Redo
             </button>
           </div>
         </div>
@@ -457,33 +499,33 @@ export default function ImageEditor() {
           <span className="font-semibold tracking-wider text-sm">CORB</span>
         </div>
           <div className="hidden sm:flex items-center gap-4 sm:gap-6">
+            <button 
+              onClick={undo} 
+              disabled={isLoading || sourceImageHistory.length === 0}
+              className="px-4 py-1.5 flex items-center gap-2 neo-convex text-main hover:!bg-none font-bold text-xs rounded transition-colors uppercase disabled:opacity-30 disabled:hover:!bg-none disabled:hover:!bg-transparent active:scale-95 active:neo-pressed border border-neo"
+            >
+              <Undo size={14} />
+              Undo
+            </button>
           
           {step !== 'upload' && (
             <button 
               onClick={reset} 
-              className="px-4 py-1.5 neo-convex text-cyan-600 hover:!bg-cyan-600 hover:!bg-none hover:text-white font-bold text-xs rounded transition-colors uppercase active:scale-95 active:neo-pressed border border-neo"
+              className="px-4 py-1.5 flex items-center gap-2 neo-convex text-cyan-600 hover:!bg-cyan-600 hover:!bg-none hover:text-white font-bold text-xs rounded transition-colors uppercase active:scale-95 active:neo-pressed border border-neo"
             >
-              Clear all
+              <Trash2 size={14} />
+              Clear
             </button>
           )}
-          {sourceImageHistory.length > 0 && (
+
             <button 
-              onClick={undoCrop} 
-              disabled={isLoading}
-              className="px-4 py-1.5 neo-convex text-cyan-600 hover:!bg-cyan-600 hover:!bg-none hover:text-white font-bold text-xs rounded transition-colors uppercase disabled:opacity-50 disabled:hover:!bg-none disabled:hover:!bg-transparent disabled:hover:text-cyan-600 active:scale-95 active:neo-pressed border border-neo"
+              onClick={redo} 
+              disabled={isLoading || redoHistory.length === 0}
+              className="px-4 py-1.5 flex items-center gap-2 neo-convex text-main hover:!bg-none font-bold text-xs rounded transition-colors uppercase disabled:opacity-30 disabled:hover:!bg-none disabled:hover:!bg-transparent active:scale-95 active:neo-pressed border border-neo"
             >
-              Undo Edit
+              <Redo size={14} />
+              Redo
             </button>
-          )}
-          {step === 'crop' && (
-            <button 
-              onClick={exportResult} 
-              disabled={isLoading}
-              className="px-4 py-1.5 neo-convex text-green-600 hover:!bg-green-600 hover:!bg-none hover:text-white font-bold text-xs rounded transition-colors uppercase disabled:opacity-50 disabled:hover:!bg-none disabled:hover:!bg-transparent disabled:hover:text-green-600 active:scale-95 active:neo-pressed border border-neo"
-            >
-              Export Result
-            </button>
-          )}
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
             <div className="relative">
@@ -825,6 +867,16 @@ export default function ImageEditor() {
               </div>
             </div>
 
+            {step === 'crop' && (
+              <button 
+                onClick={exportResult} 
+                disabled={isLoading}
+                className="w-full mb-4 py-3 neo-convex text-green-600 hover:!bg-green-600 hover:!bg-none hover:text-white font-bold text-sm rounded transition-colors uppercase disabled:opacity-50 disabled:hover:!bg-none disabled:hover:!bg-transparent disabled:hover:text-green-600 active:scale-95 active:neo-pressed border border-neo"
+              >
+                Export Result
+              </button>
+            )}
+
             {error ? (
                <div className="mt-4 text-[10px] text-red-400 font-serif">{error}</div>
             ) : isLoading ? (
@@ -950,10 +1002,17 @@ export default function ImageEditor() {
 
           {/* Zoom Controls */}
           {sourceImage && (
-            <div className="absolute bottom-4 left-4 sm:bottom-8 sm:left-8 flex gap-1 sm:gap-1.5 z-50 neo-flat p-1 sm:p-1.5 rounded">
-              <button onClick={() => setZoom(z => Math.max(0.1, z - 0.1))} className="w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center text-main neo-convex hover:neo-pressed rounded transition-colors text-base sm:text-lg leading-none active:scale-95 active:neo-pressed border border-neo">-</button>
+            <div className="absolute bottom-4 left-4 sm:bottom-8 sm:left-8 flex gap-1 sm:gap-1.5 z-50 neo-flat p-1 sm:p-1.5 rounded items-center">
+              <input 
+                type="range" 
+                min="0.1" 
+                max="5" 
+                step="0.05"
+                value={zoom} 
+                onChange={e => setZoom(Number(e.target.value))}
+                className="w-24 sm:w-32 accent-cyan-500 h-1 mx-1"
+              />
               <div className="w-10 sm:w-12 h-6 sm:h-7 flex items-center justify-center text-[10px] sm:text-xs font-mono text-main select-none neo-pressed rounded">{Math.round(zoom * 100)}%</div>
-              <button onClick={() => setZoom(z => Math.min(5, z + 0.1))} className="w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center text-main neo-convex hover:neo-pressed rounded transition-colors text-base sm:text-lg leading-none active:scale-95 active:neo-pressed border border-neo">+</button>
               <button onClick={() => { setZoom(1); setPan({x: 0, y: 0}); }} className="px-1 sm:px-2 h-6 sm:h-7 flex items-center justify-center text-[9px] sm:text-[10px] text-cyan-600 font-mono neo-convex hover:neo-pressed rounded transition-colors uppercase tracking-widest ml-1 active:scale-95 active:neo-pressed border border-neo">Reset</button>
             </div>
           )}
