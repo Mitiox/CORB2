@@ -101,26 +101,47 @@ async function startServer() {
         return res.status(400).json({ error: 'Missing base64Data' });
       }
 
-      const apiKey = process.env.REMOVE_BG_API_KEY;
-      if (!apiKey) {
+      const apiKeys = [
+        process.env.REMOVE_BG_API_KEY,
+        process.env.REMOVE_BG_API_KEY_2,
+        process.env.REMOVE_BG_API_KEY_3
+      ].filter(Boolean) as string[];
+
+      if (apiKeys.length === 0) {
         throw new Error('REMOVE_BG_API_KEY is not configured in environment secrets. Please get a free API key from remove.bg and add it.');
       }
 
-      const response = await fetch('https://api.remove.bg/v1.0/removebg', {
-        method: 'POST',
-        headers: {
-          'X-Api-Key': apiKey,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          image_file_b64: base64Data,
-          size: 'auto',
-          format: 'png'
-        })
-      });
+      let response;
+      for (let i = 0; i < apiKeys.length; i++) {
+        const currentKey = apiKeys[i];
+        response = await fetch('https://api.remove.bg/v1.0/removebg', {
+          method: 'POST',
+          headers: {
+            'X-Api-Key': currentKey,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            image_file_b64: base64Data,
+            size: 'auto',
+            format: 'png'
+          })
+        });
 
-      if (!response.ok) {
+        if (response.ok) {
+          break;
+        }
+
+        if (response.status !== 402 && response.status !== 403) {
+          break; // If it's a 400 Bad Request or 500 error, don't cycle keys
+        }
+
+        if (i < apiKeys.length - 1) {
+          console.log(`remove.bg key ${i + 1} failed with status ${response.status}. Trying next key...`);
+        }
+      }
+
+      if (!response || !response.ok) {
         let errorMessage = `Remove.bg API failed (${response.status})`;
         try {
           const errorData = await response.json();
