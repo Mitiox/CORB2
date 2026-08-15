@@ -3,7 +3,7 @@ import React, { useLayoutEffect, useState, useRef, useEffect } from 'react';
 import ReactCrop, { type Crop, type PixelCrop, centerCrop, makeAspectCrop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import corbLogo from '../assets/images/logo.png';
-import { Menu, X, Trash2, Undo, Redo } from 'lucide-react';
+import { Menu, X, Trash2, Undo, Redo, Eye } from 'lucide-react';
 
 type Step = 'upload' | 'crop';
 
@@ -44,6 +44,8 @@ export default function ImageEditor() {
   // Inputs
   const [urlInput, setUrlInput] = useState('');
   const [sourceImage, setSourceImage] = useState<string>('');
+  const [originalImage, setOriginalImage] = useState<string>('');
+  const [isComparing, setIsComparing] = useState<boolean>(false);
   const [sourceImageHistory, setSourceImageHistory] = useState<string[]>([]);
   const [redoHistory, setRedoHistory] = useState<string[]>([]);
   
@@ -99,8 +101,11 @@ export default function ImageEditor() {
               setSourceImageHistory([]);
               setRedoHistory([]);
               setSourceImage(reader.result as string);
+              setOriginalImage(reader.result as string);
               setStep('crop');
               setIsCroppingMode(false);
+              setPan({x: 0, y: 0});
+              setZoom(1);
             });
             reader.readAsDataURL(file);
             break;
@@ -123,8 +128,11 @@ export default function ImageEditor() {
         setSourceImageHistory([]);
         setRedoHistory([]);
         setSourceImage(reader.result?.toString() || '');
+        setOriginalImage(reader.result?.toString() || '');
         setStep('crop');
         setIsCroppingMode(false);
+        setPan({x: 0, y: 0});
+        setZoom(1);
         setError('');
       });
       reader.readAsDataURL(file);
@@ -144,8 +152,11 @@ export default function ImageEditor() {
         setSourceImageHistory([]);
         setRedoHistory([]);
         setSourceImage(reader.result?.toString() || '');
+        setOriginalImage(reader.result?.toString() || '');
         setStep('crop');
         setIsCroppingMode(false);
+        setPan({x: 0, y: 0});
+        setZoom(1);
         setError('');
       });
       reader.readAsDataURL(file);
@@ -170,21 +181,7 @@ export default function ImageEditor() {
     }
   };
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        if (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey)) {
-          e.preventDefault();
-          redo();
-        } else if (e.key.toLowerCase() === 'z') {
-          e.preventDefault();
-          undo();
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [sourceImage, sourceImageHistory, redoHistory]);
+
 
   const handleUrlLoad = async () => {
     if (!urlInput) return;
@@ -202,9 +199,12 @@ export default function ImageEditor() {
       setSourceImageHistory([]);
       setRedoHistory([]);
       setSourceImage(data.dataUri);
+      setOriginalImage(data.dataUri);
       
       setStep('crop');
       setIsCroppingMode(false);
+      setPan({x: 0, y: 0});
+      setZoom(1);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -212,7 +212,18 @@ export default function ImageEditor() {
     }
   };
 
-  const onImageLoad = (_e: React.SyntheticEvent<HTMLImageElement>) => {
+  useEffect(() => {
+    if (sourceImage) {
+      const img = new Image();
+      img.onload = () => {
+        setTargetWidth(img.naturalWidth);
+        setTargetHeight(img.naturalHeight);
+      };
+      img.src = sourceImage;
+    }
+  }, [sourceImage]);
+
+  const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     if (!crop) {
       setCrop({
         unit: '%',
@@ -371,8 +382,8 @@ export default function ImageEditor() {
       const ctx = finalCanvas.getContext('2d');
       if (!ctx) throw new Error('Could not get canvas context');
 
-      if (!isTransparent) {
-        ctx.fillStyle = bgColor;
+      if (!isTransparent || exportFormat === 'image/jpeg') {
+        ctx.fillStyle = (!isTransparent) ? bgColor : '#ffffff';
         ctx.fillRect(0, 0, targetWidth, targetHeight);
       }
 
@@ -393,10 +404,6 @@ export default function ImageEditor() {
       a.href = finalDataUrl;
       a.download = `Corbs_image.${extension}`;
       a.click();
-      
-      // Clear memory-heavy history caches after export as they are no longer needed
-      setSourceImageHistory([]);
-      setRedoHistory([]);
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Failed to export image');
@@ -435,6 +442,7 @@ export default function ImageEditor() {
   const reset = () => {
     setStep('upload');
     setSourceImage('');
+    setOriginalImage('');
     setSourceImageHistory([]);
     setRedoHistory([]);
     setCrop(undefined);
@@ -445,6 +453,58 @@ export default function ImageEditor() {
     setPan({x:0, y:0});
     setZoom(1);
   };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
+        return;
+      }
+      if (e.key === ' ' && step !== 'upload') {
+        e.preventDefault();
+        setIsComparing(true);
+      }
+      
+      // Delete to clear all
+      if (e.key === 'Delete' && !isCroppingMode && step !== 'upload') {
+        e.preventDefault();
+        reset();
+      }
+
+      // Cropping shortcuts
+      if (isCroppingMode) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          applyCrop();
+        } else if (e.key === 'Backspace' || e.key === 'Escape') {
+          e.preventDefault();
+          setIsCroppingMode(false);
+          setCrop(undefined);
+          setCompletedCrop(undefined);
+        }
+      }
+
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey)) {
+          e.preventDefault();
+          redo();
+        } else if (e.key.toLowerCase() === 'z') {
+          e.preventDefault();
+          undo();
+        }
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === ' ') {
+        setIsComparing(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [sourceImage, sourceImageHistory, redoHistory, step, isCroppingMode, reset, applyCrop]);
 
   return (
     <div className="w-screen h-screen bg-page text-main font-sans flex flex-col overflow-hidden select-none">
@@ -477,6 +537,16 @@ export default function ImageEditor() {
               Clear
             </button>
             <button 
+              onPointerDown={() => setIsComparing(true)}
+              onPointerUp={() => setIsComparing(false)}
+              onPointerLeave={() => setIsComparing(false)}
+              disabled={isLoading || !sourceImage || !originalImage || step === 'upload'}
+              className="px-4 py-3 flex items-center justify-center gap-2 neo-convex text-main hover:!bg-none font-bold text-sm rounded transition-colors uppercase disabled:opacity-30 disabled:hover:!bg-none disabled:hover:!bg-transparent active:scale-95 active:neo-pressed border border-neo select-none"
+            >
+              <Eye size={16} />
+              Compare
+            </button>
+            <button 
               onClick={() => { redo(); setIsMobileMenuOpen(false); }} 
               disabled={isLoading || redoHistory.length === 0}
               className="px-4 py-3 flex items-center justify-center gap-2 neo-convex text-main hover:!bg-none font-bold text-sm rounded transition-colors uppercase disabled:opacity-30 disabled:hover:!bg-none disabled:hover:!bg-transparent active:scale-95 active:neo-pressed border border-neo"
@@ -495,7 +565,7 @@ export default function ImageEditor() {
           <button className="sm:hidden p-2 text-main -ml-2" onClick={() => setIsMobileMenuOpen(true)}>
             <Menu size={24} />
           </button>
-          <img src={corbLogo} alt="Corb Logo" className="w-8 h-8 object-cover shrink-0" referrerPolicy="no-referrer" />
+          <img src={corbLogo} alt="Corb Logo" className="w-8 h-8 object-cover shrink-0" referrerPolicy="no-referrer" draggable={false} />
           <span className="font-semibold tracking-wider text-sm">CORB</span>
         </div>
           <div className="hidden sm:flex items-center gap-4 sm:gap-6">
@@ -518,6 +588,16 @@ export default function ImageEditor() {
             </button>
           )}
 
+            <button 
+              onPointerDown={() => setIsComparing(true)}
+              onPointerUp={() => setIsComparing(false)}
+              onPointerLeave={() => setIsComparing(false)}
+              disabled={isLoading || !sourceImage || !originalImage || step === 'upload'}
+              className="px-4 py-1.5 flex items-center gap-2 neo-convex text-main hover:!bg-none font-bold text-xs rounded transition-colors uppercase disabled:opacity-30 disabled:hover:!bg-none disabled:hover:!bg-transparent active:scale-95 active:neo-pressed border border-neo select-none"
+            >
+              <Eye size={14} />
+              Compare
+            </button>
             <button 
               onClick={redo} 
               disabled={isLoading || redoHistory.length === 0}
@@ -677,7 +757,7 @@ export default function ImageEditor() {
                     }
                   }}
                   disabled={isLoading || step !== 'crop' || isCroppingMode}
-                  className="w-full p-2 neo-convex text-cyan-600 rounded hover:neo-pressed transition-all font-bold text-xs uppercase tracking-widest disabled:opacity-50 text-center active:scale-95 active:neo-pressed border border-neo"
+                  className="w-full p-2 neo-convex text-cyan-600 rounded hover:scale-[1.02] hover:bg-cyan-50 transition-all font-bold text-xs uppercase tracking-widest disabled:opacity-50 disabled:hover:scale-100 disabled:hover:bg-transparent text-center active:scale-95 active:neo-pressed border border-neo"
                 >
                   Crop
                 </button>
@@ -716,7 +796,7 @@ export default function ImageEditor() {
                 <button
                   onClick={removeBgOnly}
                   disabled={isLoading || step !== 'crop'}
-                  className="w-full p-2 neo-convex text-emerald-600 rounded hover:neo-pressed transition-all font-bold text-xs uppercase tracking-widest disabled:opacity-50 text-center active:scale-95 active:neo-pressed border border-neo"
+                  className="w-full p-2 neo-convex text-emerald-600 rounded hover:scale-[1.02] hover:bg-emerald-50 transition-all font-bold text-xs uppercase tracking-widest disabled:opacity-50 disabled:hover:scale-100 disabled:hover:bg-transparent text-center active:scale-95 active:neo-pressed border border-neo"
                 >
                   Remove Background
                 </button>
@@ -936,10 +1016,11 @@ export default function ImageEditor() {
                     >
                       <img 
                         ref={imgRef}
-                        src={sourceImage} 
+                        src={isComparing && originalImage ? originalImage : sourceImage} 
                         alt="Source" 
                         onLoad={onImageLoad}
                         onClick={handleImageClickForEyedropper}
+                        draggable={false}
                         className={`max-h-full max-w-full ${isEyedropperActive ? 'cursor-crosshair' : ''}`}
                         style={{ maxHeight: 'calc(100vh - 12rem)' }} // Account for header/footer padding
                       />
@@ -947,10 +1028,11 @@ export default function ImageEditor() {
                   ) : (
                     <img 
                       ref={imgRef}
-                      src={sourceImage} 
+                      src={isComparing && originalImage ? originalImage : sourceImage} 
                       alt="Source" 
                       onLoad={onImageLoad}
                       onClick={handleImageClickForEyedropper}
+                      draggable={false}
                       className={`max-h-full max-w-full ${isEyedropperActive ? 'cursor-crosshair' : ''}`}
                       style={{ maxHeight: 'calc(100vh - 12rem)' }} // Account for header/footer padding
                     />
@@ -1000,7 +1082,7 @@ export default function ImageEditor() {
             </div>
           )}
 
-          {/* Zoom Controls */}
+          {/* Zoom & Compare Controls */}
           {sourceImage && (
             <div className="absolute bottom-4 left-4 sm:bottom-8 sm:left-8 flex gap-1 sm:gap-1.5 z-50 neo-flat p-1 sm:p-1.5 rounded items-center">
               <input 
@@ -1010,7 +1092,7 @@ export default function ImageEditor() {
                 step="0.05"
                 value={zoom} 
                 onChange={e => setZoom(Number(e.target.value))}
-                className="w-24 sm:w-32 accent-cyan-500 h-1 mx-1"
+                className="w-20 sm:w-28 accent-cyan-500 h-1 mx-1"
               />
               <div className="w-10 sm:w-12 h-6 sm:h-7 flex items-center justify-center text-[10px] sm:text-xs font-mono text-main select-none neo-pressed rounded">{Math.round(zoom * 100)}%</div>
               <button onClick={() => { setZoom(1); setPan({x: 0, y: 0}); }} className="px-1 sm:px-2 h-6 sm:h-7 flex items-center justify-center text-[9px] sm:text-[10px] text-cyan-600 font-mono neo-convex hover:neo-pressed rounded transition-colors uppercase tracking-widest ml-1 active:scale-95 active:neo-pressed border border-neo">Reset</button>

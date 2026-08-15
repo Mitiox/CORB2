@@ -1,16 +1,12 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI, Type } from '@google/genai';
-
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
   // Middleware to handle larger payloads (images)
   app.use(express.json({ limit: '50mb' }));
-
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
   // Endpoint to fetch external images and return as base64 to avoid canvas tainting/CORS
   app.post('/api/proxy-image', async (req, res) => {
@@ -43,53 +39,6 @@ async function startServer() {
     } catch (error: any) {
       console.error('Error proxying image:', error);
       res.status(500).json({ error: error.message || 'Failed to fetch image' });
-    }
-  });
-
-  // Endpoint to suggest a tight crop using Gemini Vision
-  app.post('/api/suggest-crop', async (req, res) => {
-    try {
-      const { base64Data, mimeType } = req.body;
-      if (!base64Data) {
-        return res.status(400).json({ error: 'Missing base64Data' });
-      }
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-1.5-flash',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: "Analyze this image and identify the primary subject/object. Return the tightest possible bounding box that contains this subject. Do not include excessive background. Values MUST be floats between 0.0 and 1.0 representing percentages of the total image width and height." },
-              { inlineData: { data: base64Data, mimeType: mimeType || 'image/jpeg' } }
-            ]
-          }
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              ymin: { type: Type.NUMBER, description: "Top edge (0.0 to 1.0)" },
-              xmin: { type: Type.NUMBER, description: "Left edge (0.0 to 1.0)" },
-              ymax: { type: Type.NUMBER, description: "Bottom edge (0.0 to 1.0)" },
-              xmax: { type: Type.NUMBER, description: "Right edge (0.0 to 1.0)" }
-            },
-            required: ["ymin", "xmin", "ymax", "xmax"]
-          }
-        }
-      });
-
-      const jsonStr = response.text;
-      if (!jsonStr) {
-        throw new Error('Empty response from model');
-      }
-
-      const result = JSON.parse(jsonStr);
-      res.json(result);
-    } catch (error: any) {
-      console.error('Error suggesting crop:', error);
-      res.status(500).json({ error: error.message || 'Failed to suggest crop' });
     }
   });
 
@@ -132,27 +81,35 @@ async function startServer() {
           break;
         }
 
-        if (response.status !== 402 && response.status !== 403) {
-          break; // If it's a 400 Bad Request or 500 error, don't cycle keys
+        // Always consume the response body even if we ignore it, to free up memory/sockets
+        let errorData = null;
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          // Ignore json parse errors for intermediate failed attempts
         }
 
-        if (i < apiKeys.length - 1) {
-          console.log(`remove.bg key ${i + 1} failed with status ${response.status}. Trying next key...`);
+        if (response.status !== 402 && response.status !== 403) {
+          // If it's a 400 Bad Request or 500 error, don't cycle keys
+          let errorMessage = `Remove.bg API failed (${response.status})`;
+          if (errorData && errorData.errors && errorData.errors.length > 0) {
+            errorMessage = errorData.errors[0].title || errorData.errors[0].detail || errorMessage;
+          }
+          throw new Error(errorMessage);
+        }
+
+        if (i === apiKeys.length - 1) {
+          // All keys exhausted
+          let errorMessage = `All configured Remove.bg API keys are out of credits or invalid (${response.status}).`;
+          if (errorData && errorData.errors && errorData.errors.length > 0) {
+            errorMessage = errorData.errors[0].title || errorData.errors[0].detail || errorMessage;
+          }
+          throw new Error(errorMessage);
         }
       }
 
       if (!response || !response.ok) {
-        let errorMessage = `Remove.bg API failed (${response.status})`;
-        try {
-          const errorData = await response.json();
-          if (errorData.errors && errorData.errors.length > 0) {
-            errorMessage = errorData.errors[0].title || errorData.errors[0].detail || errorMessage;
-          }
-        } catch (e) {
-          // Fallback if not json
-        }
-        console.error('Remove.bg API Error:', response.status, errorMessage);
-        throw new Error(errorMessage);
+        throw new Error('Failed to remove background due to an unknown API error.');
       }
 
       const data = await response.json();
