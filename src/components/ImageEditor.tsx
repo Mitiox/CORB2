@@ -81,7 +81,7 @@ export default function ImageEditor() {
   // Aspect Ratio & Export
   const [aspectRatio, setAspectRatio] = useState<number | undefined>(undefined);
   const [exportFormat, setExportFormat] = useState<'image/png' | 'image/jpeg' | 'image/webp'>('image/png');
-  const [exportQuality, setExportQuality] = useState<number>(92);
+  const [exportQuality, setExportQuality] = useState<number>(100);
 
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
@@ -391,11 +391,14 @@ export default function ImageEditor() {
       tempImg.src = sourceImage;
       await new Promise((resolve) => { tempImg.onload = resolve; });
 
-      const scale = Math.min(targetWidth / tempImg.width, targetHeight / tempImg.height);
-      const x = (targetWidth / 2) - (tempImg.width / 2) * scale;
-      const y = (targetHeight / 2) - (tempImg.height / 2) * scale;
+      const scale = Math.min(targetWidth / tempImg.naturalWidth, targetHeight / tempImg.naturalHeight);
+      const x = (targetWidth / 2) - (tempImg.naturalWidth / 2) * scale;
+      const y = (targetHeight / 2) - (tempImg.naturalHeight / 2) * scale;
 
-      ctx.drawImage(tempImg, x, y, tempImg.width * scale, tempImg.height * scale);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+
+      ctx.drawImage(tempImg, x, y, tempImg.naturalWidth * scale, tempImg.naturalHeight * scale);
       
       const finalDataUrl = finalCanvas.toDataURL(exportFormat, exportQuality / 100);
       const extension = exportFormat.split('/')[1];
