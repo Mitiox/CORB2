@@ -69,7 +69,7 @@ export default function ImageEditor() {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
-  const [lastPanPos, setLastPanPos] = useState({ x: 0, y: 0 });
+  const lastPanPos = useRef({ x: 0, y: 0 });
 
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [isEyedropperActive, setIsEyedropperActive] = useState(false);
@@ -419,7 +419,7 @@ export default function ImageEditor() {
   const handlePointerDown = (e: React.PointerEvent) => {
     if (!isCroppingMode || e.button === 1) {
       setIsPanning(true);
-      setLastPanPos({ x: e.clientX, y: e.clientY });
+      lastPanPos.current = { x: e.clientX, y: e.clientY };
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
     }
   };
@@ -428,10 +428,10 @@ export default function ImageEditor() {
     setMousePos({ x: e.clientX, y: e.clientY });
     if (isPanning) {
       setPan(prev => ({
-        x: prev.x + (e.clientX - lastPanPos.x),
-        y: prev.y + (e.clientY - lastPanPos.y)
+        x: prev.x + (e.clientX - lastPanPos.current.x),
+        y: prev.y + (e.clientY - lastPanPos.current.y)
       }));
-      setLastPanPos({ x: e.clientX, y: e.clientY });
+      lastPanPos.current = { x: e.clientX, y: e.clientY };
     }
   };
 
@@ -457,11 +457,18 @@ export default function ImageEditor() {
     setZoom(1);
   };
 
+  const stateRef = useRef({ step, isCroppingMode, reset, applyCrop, undo, redo });
+  useEffect(() => {
+    stateRef.current = { step, isCroppingMode, reset, applyCrop, undo, redo };
+  });
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
         return;
       }
+      const { step, isCroppingMode, reset, applyCrop, undo, redo } = stateRef.current;
+      
       if (e.key === ' ' && step !== 'upload') {
         e.preventDefault();
         setIsComparing(true);
@@ -507,7 +514,7 @@ export default function ImageEditor() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [sourceImage, sourceImageHistory, redoHistory, step, isCroppingMode, reset, applyCrop]);
+  }, []);
 
   return (
     <div className="w-screen h-screen bg-page text-main font-sans flex flex-col overflow-hidden select-none">
@@ -982,7 +989,21 @@ export default function ImageEditor() {
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
           onWheel={(e) => {
-            setZoom(z => Math.max(0.1, Math.min(z - e.deltaY * 0.001, 5)));
+            const zoomFactor = -e.deltaY * 0.001;
+            setZoom(prevZoom => {
+              const newZoom = Math.max(0.1, Math.min(prevZoom + zoomFactor, 5));
+              if (newZoom !== prevZoom) {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left - rect.width / 2;
+                const mouseY = e.clientY - rect.top - rect.height / 2;
+                
+                setPan(prevPan => ({
+                  x: prevPan.x - (mouseX - prevPan.x) * (newZoom / prevZoom - 1),
+                  y: prevPan.y - (mouseY - prevPan.y) * (newZoom / prevZoom - 1)
+                }));
+              }
+              return newZoom;
+            });
           }}
           
           onDragOver={handleDragOver}
