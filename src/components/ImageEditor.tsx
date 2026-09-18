@@ -139,11 +139,11 @@ export default function ImageEditor() {
     }
   };
 
-  const handleDragOver = (e: React.DragEvent<HTMLLabelElement>) => {
+  const handleDragOver = (e: React.DragEvent<HTMLElement>) => {
     e.preventDefault();
   };
 
-  const handleDrop = (e: React.DragEvent<HTMLLabelElement>) => {
+  const handleDrop = (e: React.DragEvent<HTMLElement>) => {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
@@ -223,30 +223,27 @@ export default function ImageEditor() {
     }
   }, [sourceImage]);
 
-  const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    if (!crop) {
-      setCrop({
-        unit: '%',
-        x: 10,
-        y: 10,
-        width: 80,
-        height: 80
-      });
+  const calculateCenterCrop = (ratio: number | undefined, width: number, height: number) => {
+    if (!ratio) {
+      return { unit: '%' as const, x: 10, y: 10, width: 80, height: 80 };
+    }
+    return centerCrop(
+      makeAspectCrop({ unit: '%', width: 90 }, ratio, width, height),
+      width,
+      height
+    );
+  };
+
+  const onImageLoad = () => {
+    if (!crop && isCroppingMode && imgRef.current) {
+      const { naturalWidth: width, naturalHeight: height } = imgRef.current;
+      setCrop(calculateCenterCrop(aspectRatio, width, height));
     }
   };
 
   const handleImageClickForEyedropper = (e: React.MouseEvent<HTMLImageElement>) => {
     if (!isEyedropperActive || !imgRef.current) return;
     const img = imgRef.current;
-    
-    // We draw to a canvas to read the exact pixel color
-    const canvas = document.createElement('canvas');
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    ctx.drawImage(img, 0, 0);
     
     // Map click coordinates to natural image size
     const rect = img.getBoundingClientRect();
@@ -255,9 +252,17 @@ export default function ImageEditor() {
     
     const x = Math.floor((e.clientX - rect.left) * scaleX);
     const y = Math.floor((e.clientY - rect.top) * scaleY);
+
+    // Optimized: allocate a 1x1 canvas to sample only the clicked pixel instead of the whole image
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
     
     try {
-      const pixel = ctx.getImageData(x, y, 1, 1).data;
+      ctx.drawImage(img, x, y, 1, 1, 0, 0, 1, 1);
+      const pixel = ctx.getImageData(0, 0, 1, 1).data;
       const hex = "#" + ("000000" + ((pixel[0] << 16) | (pixel[1] << 8) | pixel[2]).toString(16)).slice(-6);
       setPickedColor(hex);
       setIsEyedropperActive(false);
@@ -266,26 +271,26 @@ export default function ImageEditor() {
     }
   };
 
-  const getCroppedImg = async (image: HTMLImageElement, crop: Crop): Promise<Blob> => {
+  const getCroppedImg = (image: HTMLImageElement, cropArea: Crop): string => {
     const canvas = document.createElement('canvas');
     let actualX, actualY, actualWidth, actualHeight;
 
-    if (crop.unit === '%') {
-      actualX = (crop.x / 100) * image.naturalWidth;
-      actualY = (crop.y / 100) * image.naturalHeight;
-      actualWidth = (crop.width / 100) * image.naturalWidth;
-      actualHeight = (crop.height / 100) * image.naturalHeight;
+    if (cropArea.unit === '%') {
+      actualX = (cropArea.x / 100) * image.naturalWidth;
+      actualY = (cropArea.y / 100) * image.naturalHeight;
+      actualWidth = (cropArea.width / 100) * image.naturalWidth;
+      actualHeight = (cropArea.height / 100) * image.naturalHeight;
     } else {
       const scaleX = image.naturalWidth / image.width;
       const scaleY = image.naturalHeight / image.height;
-      actualX = crop.x * scaleX;
-      actualY = crop.y * scaleY;
-      actualWidth = crop.width * scaleX;
-      actualHeight = crop.height * scaleY;
+      actualX = cropArea.x * scaleX;
+      actualY = cropArea.y * scaleY;
+      actualWidth = cropArea.width * scaleX;
+      actualHeight = cropArea.height * scaleY;
     }
 
-    canvas.width = actualWidth;
-    canvas.height = actualHeight;
+    canvas.width = Math.max(1, Math.round(actualWidth));
+    canvas.height = Math.max(1, Math.round(actualHeight));
     
     const ctx = canvas.getContext('2d');
     if (!ctx) {
@@ -300,34 +305,20 @@ export default function ImageEditor() {
       actualHeight,
       0,
       0,
-      actualWidth,
-      actualHeight
+      canvas.width,
+      canvas.height
     );
 
-    return new Promise((resolve, reject) => {
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          reject(new Error('Canvas is empty'));
-          return;
-        }
-        resolve(blob);
-      }, 'image/png');
-    });
+    return canvas.toDataURL('image/png');
   };
 
-  const applyCrop = async () => {
+  const applyCrop = () => {
     if (!imgRef.current || !crop || crop.width === 0 || crop.height === 0) {
       setError('Please select a valid crop area.');
       return;
     }
     try {
-      const croppedBlob = await getCroppedImg(imgRef.current, crop);
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve) => {
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(croppedBlob);
-      });
-      const dataUri = await base64Promise;
+      const dataUri = getCroppedImg(imgRef.current, crop);
       setSourceImageHistory(prev => [...prev, sourceImage].slice(-10));
       setRedoHistory([]);
       setSourceImage(dataUri);
@@ -400,17 +391,28 @@ export default function ImageEditor() {
 
       ctx.drawImage(tempImg, x, y, tempImg.naturalWidth * scale, tempImg.naturalHeight * scale);
       
-      const finalDataUrl = finalCanvas.toDataURL(exportFormat, exportQuality / 100);
-      const extension = exportFormat.split('/')[1];
-      
-      const a = document.createElement('a');
-      a.href = finalDataUrl;
-      a.download = `Corbs_image.${extension}`;
-      a.click();
+      const extension = exportFormat.split('/')[1] || 'png';
+      finalCanvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            setError('Failed to export image');
+            setIsLoading(false);
+            return;
+          }
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = `Corbs_image.${extension}`;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+          setIsLoading(false);
+        },
+        exportFormat,
+        exportQuality / 100
+      );
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Failed to export image');
-    } finally {
       setIsLoading(false);
     }
   };
@@ -425,7 +427,9 @@ export default function ImageEditor() {
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    setMousePos({ x: e.clientX, y: e.clientY });
+    if (isCroppingMode) {
+      setMousePos({ x: e.clientX, y: e.clientY });
+    }
     if (isPanning) {
       setPan(prev => ({
         x: prev.x + (e.clientX - lastPanPos.current.x),
@@ -754,16 +758,9 @@ export default function ImageEditor() {
                 <button
                   onClick={() => {
                     setIsCroppingMode(true);
-                    if (aspectRatio && imgRef.current) {
+                    if (imgRef.current) {
                       const { naturalWidth: width, naturalHeight: height } = imgRef.current;
-                      const newCrop = centerCrop(
-                        makeAspectCrop({ unit: '%', width: 90 }, aspectRatio, width, height),
-                        width,
-                        height
-                      );
-                      setCrop(newCrop);
-                    } else if (!crop) {
-                      setCrop({ unit: '%', x: 10, y: 10, width: 80, height: 80 });
+                      setCrop(calculateCenterCrop(aspectRatio, width, height));
                     }
                   }}
                   disabled={isLoading || step !== 'crop' || isCroppingMode}
@@ -782,14 +779,7 @@ export default function ImageEditor() {
                              setAspectRatio(ar.val);
                              if (imgRef.current && isCroppingMode) {
                                const { naturalWidth: width, naturalHeight: height } = imgRef.current;
-                               if (ar.val) {
-                                 const newCrop = centerCrop(
-                                   makeAspectCrop({ unit: '%', width: 90 }, ar.val, width, height),
-                                   width,
-                                   height
-                                 );
-                                 setCrop(newCrop);
-                               }
+                               setCrop(calculateCenterCrop(ar.val, width, height));
                              }
                            }}
                            className={`py-1 text-[10px] rounded transition-colors ${aspectRatio === ar.val ? 'neo-pressed text-cyan-600 font-bold' : 'neo-convex text-muted hover:neo-pressed'}`}
